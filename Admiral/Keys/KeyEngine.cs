@@ -56,6 +56,9 @@ internal sealed partial class KeyEngine : IDisposable
 
     private volatile bool _playing;
 
+    /// <summary>Why another program plays the keys and the dial right now (from <see cref="KeysTakenBy"/>), or null.</summary>
+    public string? KeysTakenReason { get; private set; }
+
     private const byte Right = 79, Left = 80, Down = 81, Up = 82;
 
     public void Start()
@@ -126,7 +129,9 @@ internal sealed partial class KeyEngine : IDisposable
                             await LoadAsync();
                             _reload = false;
                         }
-                        string? taken = PlayKeys ? KeysTakenBy?.Invoke() : null;
+                        string? taken = KeysTakenBy?.Invoke();
+                        if (taken != KeysTakenReason) { KeysTakenReason = taken; StatusChanged?.Invoke(); }
+                        if (!PlayKeys) taken = null;
                         bool play = PlayKeys && taken == null;
                         if (!play && _playing) ReleaseAll();
                         _playing = play;
@@ -138,6 +143,7 @@ internal sealed partial class KeyEngine : IDisposable
                     {
                         if (Active) ReleaseAll();
                         _playing = false;
+                        if (KeysTakenReason != null) { KeysTakenReason = null; StatusChanged?.Invoke(); }
                         SetStatus("The keyboard runs your custom keys itself", false);
                     }
                     await Task.WhenAny(reader, Task.Delay(ModePoll, ct));

@@ -16,6 +16,9 @@ internal static class AppLog
 {
     private static readonly object Gate = new();
 
+    /// <summary>What the tray (UI thread) is busy with, for the watchdog's report.</summary>
+    public static volatile string UiDoing = "starting";
+
     public static void Write(string s)
     {
         // With SignalRGB streaming, every command skips its replies; that's normal and would flood the log.

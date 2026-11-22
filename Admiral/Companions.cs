@@ -25,6 +25,7 @@ internal static class Companions
     /// </summary>
     public static string? KeysTakenBy()
     {
+        if (SignalRgbPlaysKeys()) return "The SignalRGB plugin is playing your custom keys";
         if (Mutex.TryOpenExisting(DeckMapperKeyService, out var m)) { m.Dispose(); return "DeckMapper's own key service is playing your keys"; }
         foreach (var p in Process.GetProcessesByName("DeckMapper"))
             using (p)
@@ -38,6 +39,28 @@ internal static class Companions
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { }
             }
         return null;
+    }
+
+    /// <summary>
+    /// The Air 99 SignalRGB plugin can play the custom keys itself ("Custom keys in software mode", off by default).
+    /// SignalRGB keeps each device's settings under its devices key, one subkey per device (1b1c:2b21:serial).
+    /// True while SignalRGB runs with that setting on.
+    /// </summary>
+    private static bool SignalRgbPlaysKeys()
+    {
+        try
+        {
+            using var devices = Registry.CurrentUser.OpenSubKey(@"Software\WhirlwindFX\SignalRgb\devices");
+            if (devices == null) return false;
+            bool on = devices.GetSubKeyNames()
+                .Where(n => n.StartsWith("1b1c:2b21", StringComparison.OrdinalIgnoreCase))
+                .Any(n => { using var k = devices.OpenSubKey(n); return k?.GetValue("customKeys") as string == "On"; });
+            if (!on) return false;
+            var running = Process.GetProcessesByName("SignalRgb");
+            foreach (var p in running) p.Dispose();
+            return running.Length > 0;
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or IOException or UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>Why the card is left alone: TrackDeck itself is running.</summary>

@@ -39,7 +39,13 @@ internal sealed class TrayApp : ApplicationContext
 
     public TrayApp()
     {
-        _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        // Always a real WinForms context bound to this (the tray's) thread. SynchronizationContext.Current can be a plain
+        // SynchronizationContext here, whose Post runs on the thread pool: menu updates then built the menu on other
+        // threads, and the tray icon could no longer open it (right-click did nothing).
+        _ui = new WindowsFormsSynchronizationContext();
+        SynchronizationContext.SetSynchronizationContext(_ui);
+        AppLog.Write("starting");
+        StartWatchdog();
         _switcher = new ScreenSwitcher(_screen) { Log = AppLog.Write };
         _tracker = new Tracker(_screen)
         {
@@ -63,7 +69,13 @@ internal sealed class TrayApp : ApplicationContext
         _engine.ScreenStep += dir => Task.Run(() => _switcher.StepAsync(dir));
         _switcher.Switched += id => _tracker.OnScreenSwitched(id);
 
-        _tray = new NotifyIcon { Icon = MakeIcon(), Text = "Admiral", Visible = true, ContextMenuStrip = BuildMenu() };
+        AppLog.UiDoing = "building the menu";
+        var menu = BuildMenu();
+        AppLog.UiDoing = "adding the tray icon";
+        AppLog.Write("starting: adding the tray icon");
+        _tray = new NotifyIcon { Icon = MakeIcon(), Text = "Admiral", ContextMenuStrip = menu };
+        _tray.Visible = true;
+        AppLog.Write("starting: tray icon added");
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMenu(); };
         _tracker.Notice += msg => _ui.Post(_ => _tray.ShowBalloonTip(5000, "Admiral", msg, ToolTipIcon.Info), null);
         foreach (var src in new Action<Action>[] { a => _engine.StatusChanged += a, a => _switcher.StatusChanged += a, a => _tracker.StatusChanged += a })
@@ -74,8 +86,14 @@ internal sealed class TrayApp : ApplicationContext
         ListenFor(Companions.ShowMenuEvent, () => _ui.Post(_ => ShowMenu(), null));
 
         _engine.Start();
-        _timer.Tick += async (_, _) => await _tracker.TickAsync();
+        _timer.Tick += async (_, _) =>
+        {
+            AppLog.UiDoing = "card update";
+            try { await _tracker.TickAsync(); }
+            finally { AppLog.UiDoing = "idle"; }
+        };
         _timer.Start();
+        AppLog.UiDoing = "idle";
         AppLog.Write("started");
     }
 
@@ -114,6 +132,8 @@ internal sealed class TrayApp : ApplicationContext
         _cardMenu.DropDownItems.AddRange([_spotifyOnlyItem, _showPausedItem, _restoreIdleItem, _idleTimeItem]);
 
         var menu = new ContextMenuStrip();
+        menu.Opening += (_, _) => AppLog.UiDoing = "opening the menu";
+        menu.Closed += (_, _) => AppLog.UiDoing = "idle";
         _dialMenu.DropDownOpening += (_, _) => UpdateDialMenu();
         UpdateDialMenu();
         menu.Items.AddRange([_keysStatus, _screenStatus, _cardStatus, _dialMenu, new ToolStripSeparator()]);
@@ -137,21 +157,35 @@ internal sealed class TrayApp : ApplicationContext
         {
             int mode = i;
             _dialMenu.DropDownItems.Add(new ToolStripMenuItem($"Mode {i + 1}: {_engine.DialModeName(i)}", null,
-                (_, _) => _engine.DialModeIndex = mode) { Checked = i == current });
+                (_, _) => Task.Run(() => _engine.DialModeIndex = mode)) { Checked = i == current, Enabled = _engine.KeysTakenReason == null });
         }
         if (count > 0) _dialMenu.DropDownItems.Add(new ToolStripSeparator());
-        _dialMenu.DropDownItems.Add(new ToolStripMenuItem("In software mode, FN + dial press goes to the next mode") { Enabled = false });
+        _dialMenu.DropDownItems.Add(new ToolStripMenuItem(_engine.KeysTakenReason == null
+            ? "In software mode, FN + dial press goes to the next mode"
+            : "The SignalRGB plugin plays the dial now, with its own mode (FN + dial press)") { Enabled = false });
     }
 
     private void ShowMenu()
     {
         // NotifyIcon only opens its menu on right-click; this is its own (private) way of doing it.
-        typeof(NotifyIcon).GetMethod("ShowContextMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
-            ?.Invoke(_tray, null);
+        try
+        {
+            typeof(NotifyIcon).GetMethod("ShowContextMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?.Invoke(_tray, null);
+        }
+        catch (System.Reflection.TargetInvocationException e) { AppLog.Write("tray: menu failed: " + e.InnerException); }
     }
+
+    private const string KeysItemText = "Play my custom keys in software mode";
 
     private void UpdateStatus()
     {
+        // While another program plays the keys (the SignalRGB plugin's own setting), only the parts that would type
+        // twice are greyed out: the keys switch and the dial. Everything else stays usable.
+        string? taken = _engine.KeysTakenReason;
+        _keysItem.Enabled = taken == null;
+        _keysItem.Text = taken == null ? KeysItemText : KeysItemText + " (" + Lower(taken) + ")";
+        if (_dialMenu.DropDown.Visible == false) UpdateDialMenu();
         _keysStatus.Text = "Keys: " + Short(_engine.Status);
         _screenStatus.Text = "Screen: " + Short(!_settings.SwitchScreens ? "FN + arrows off in Admiral"
             : _engine.Active ? _switcher.Status : "The keyboard switches screens itself");
@@ -159,6 +193,8 @@ internal sealed class TrayApp : ApplicationContext
         string tip = _engine.Active ? "Admiral: software mode, keys and screen from the PC" : "Admiral: " + _tracker.Status;
         _tray.Text = tip.Length > 63 ? tip[..62] + "…" : tip;
     }
+
+    private static string Lower(string s) => s.Length > 0 ? char.ToLowerInvariant(s[0]) + s[1..] : s;
 
     private static string Short(string s) => s.Length > 70 ? s[..69] + "…" : s;
 
@@ -224,6 +260,36 @@ internal sealed class TrayApp : ApplicationContext
         _settings.Save();
         UpdateIdleTimeItem();
         AppLog.Write($"idle time set to {_settings.IdleSeconds} s");
+    }
+
+    /// <summary>
+    /// If the tray (the UI thread) stops answering for 5 seconds, says so in the log with what it was doing and what
+    /// the key engine says, once per stall. Costs one posted no-op every 2 seconds.
+    /// </summary>
+    private void StartWatchdog()
+    {
+        long answered = Environment.TickCount64;
+        var thread = new Thread(() =>
+        {
+            bool reported = false;
+            while (!_exiting)
+            {
+                _ui.Post(_ => Interlocked.Exchange(ref answered, Environment.TickCount64), null);
+                Thread.Sleep(2000);
+                long stuck = Environment.TickCount64 - Interlocked.Read(ref answered);
+                if (stuck > 5000 && !reported)
+                {
+                    reported = true;
+                    AppLog.Write($"watchdog: the tray hasn't answered for {stuck / 1000} s (was doing: {AppLog.UiDoing}; keys: {_engine.Status})");
+                }
+                else if (stuck <= 5000 && reported)
+                {
+                    reported = false;
+                    AppLog.Write("watchdog: the tray answers again");
+                }
+            }
+        }) { IsBackground = true, Name = "Admiral watchdog" };
+        thread.Start();
     }
 
     private void ListenFor(string name, Action onSignal)

@@ -24,12 +24,15 @@ internal sealed partial class KeyEngine
     /// <summary>Raised when the current dial mode changes (FN + dial press, or a new set of modes from the keyboard).</summary>
     public event Action? DialModeChanged;
 
-    public int DialModeCount { get { lock (_gate) return _dial.Count; } }
+    /// <summary>Names of the dial modes, replaced (never changed) on each load, so the tray reads them without a lock.</summary>
+    private volatile string[] _dialNames = [];
 
-    /// <summary>The current dial mode, 0-based. Kept in range when the modes change.</summary>
+    public int DialModeCount => _dialNames.Length;
+
+    /// <summary>The current dial mode, 0-based. Kept in range when the modes change. Reading it never waits.</summary>
     public int DialModeIndex
     {
-        get { lock (_gate) return _dialMode; }
+        get => Volatile.Read(ref _dialMode);
         set
         {
             lock (_gate)
@@ -45,16 +48,13 @@ internal sealed partial class KeyEngine
         }
     }
 
-    public string DialModeName(int i)
-    {
-        lock (_gate)
-            return i < _dial.Count ? DialNames.Name(_dial[i].Type) : "Volume";
-    }
+    public string DialModeName(int i) => _dialNames is var n && i < n.Length ? n[i] : "Volume";
 
     /// <summary>Called with the gate held, after loading the profile.</summary>
     private void SetDial(List<DialMode> modes)
     {
         _dial = modes;
+        _dialNames = modes.Select(m => DialNames.Name(m.Type)).ToArray();
         if (_dialMode >= modes.Count) _dialMode = 0;
         DialModeChanged?.Invoke();
     }

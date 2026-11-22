@@ -19,6 +19,7 @@ The editors stay separate windows: **DeckMapper** for keys, **SlotDeck** for scr
 
 - **TrackDeck** isn't needed with Admiral. If TrackDeck is running, Admiral leaves the card to it (and says so in the menu); TrackDeck won't start while Admiral runs.
 - **DeckMapper 1.2** hands its key service over to Admiral while Admiral runs, and tells Admiral to reload the keys after every Apply. An older DeckMapper with its service on keeps playing the keys itself, and Admiral steps back so no key is typed twice.
+- The **SignalRGB plugin** can play the custom keys and the dial itself (its *Custom keys in software mode* setting). While that's on and SignalRGB runs, Admiral greys out its own keys switch and dial modes so nothing is typed twice, and keeps doing the card and FN + arrow screens. Everything else in the menu stays usable.
 - Turning on **Start with Windows** in Admiral offers to stop TrackDeck and DeckMapper from starting with Windows too.
 
 ## Tray menu

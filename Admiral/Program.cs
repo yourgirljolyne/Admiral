@@ -14,6 +14,10 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        // Errors on the tray's thread go to the log instead of vanishing.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => AppLog.Write("error: " + e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => AppLog.Write("fatal: " + e.ExceptionObject);
         using var mutex = new Mutex(true, Companions.InstanceMutex, out bool first);
         if (!first)
         {
