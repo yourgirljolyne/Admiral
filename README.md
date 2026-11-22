@@ -7,6 +7,7 @@ Admiral sits in the tray and does the work that has to keep running while you us
 - **Now-playing card.** What's playing in Windows (Spotify first) on the keyboard screen: cover, title, artist, play/pause. Updated when the track changes, and your own screen comes back after a set idle time. This is what TrackDeck did; Admiral takes over its settings the first time it runs.
 - **Custom keys in software mode.** SignalRGB puts the keyboard in software mode for clean live lighting, and in that mode the keyboard stops running your remaps and macros. Admiral plays the ones you made in DeckMapper from the PC, like DeckMapper's background key service did.
 - **Screen switching in software mode.** Software mode also stops FN + arrows from switching screens, so the screen gets stuck on one picture. Admiral sees FN + arrows and steps through the profile's screen list itself (right/down forward, left/up back), the same list SlotDeck manages. A custom FN + arrow made in DeckMapper still wins.
+- **The dial in software mode.** The keyboard stops running its dial modes too. Admiral plays the profile's dial modes from DeckMapper: volume, scrolling, zoom, switching apps, track control and custom turn/press actions. The keyboard doesn't say which mode it's on, so Admiral keeps the current mode: **FN + dial press** goes to the next one, and the tray menu shows it and can pick one.
 
 In normal (self-operated) mode the keyboard does its keys and screens itself and Admiral only shows the card.
 
@@ -22,7 +23,7 @@ The editors stay separate windows: **DeckMapper** for keys, **SlotDeck** for scr
 
 ## Tray menu
 
-The first three lines say what each part is doing. Then: open DeckMapper or SlotDeck, switch each part on or off, the card's options (Spotify only, paused state, restore when idle and after how long, refresh, restore now), Start with Windows, the log, and Exit (puts your own screen back).
+The first three lines say what each part is doing, then the current dial mode. Then: open DeckMapper or SlotDeck, switch each part on or off, the card's options (Spotify only, paused state, restore when idle and after how long, refresh, restore now), Start with Windows, the log, and Exit (puts your own screen back).
 
 ## What it writes to the keyboard
 

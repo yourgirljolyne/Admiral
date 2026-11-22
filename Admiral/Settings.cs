@@ -44,6 +44,8 @@ internal sealed class Settings
     public bool ShowPaused { get; set; } = true;
     public bool RestoreWhenIdle { get; set; } = true;
     public int IdleSeconds { get; set; } = 60;
+    /// <summary>The dial mode Admiral plays in software mode (0-based; the keyboard doesn't report its own).</summary>
+    public int DialMode { get; set; }
     /// <summary>Where DeckMapper.exe and SlotDeck.exe are, once found or picked.</summary>
     public string? DeckMapperPath { get; set; }
     public string? SlotDeckPath { get; set; }

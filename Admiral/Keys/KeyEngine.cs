@@ -9,7 +9,7 @@ namespace Admiral;
 /// Admiral: the same engine as DeckMapper's background key service (kept in step by hand), plus FN + arrows for the
 /// screen, which the firmware also stops doing in software mode (<see cref="ScreenStep"/>).
 /// </summary>
-internal sealed class KeyEngine : IDisposable
+internal sealed partial class KeyEngine : IDisposable
 {
     private const ushort NotifyUsage = 0x02;
     private const byte KeyStateReport = 0x02;
@@ -159,7 +159,7 @@ internal sealed class KeyEngine : IDisposable
         try
         {
             var s = await store.LoadAsync();
-            lock (_gate) _keys = s.Keys;
+            lock (_gate) { _keys = s.Keys; SetDial(s.Dial); }
             Log?.Invoke($"engine: loaded {s.Keys.Values.Count(c => c.Main.Kind != ActionKind.Default || c.Fn.Kind != ActionKind.Default)} assigned keys");
         }
         finally { await store.CloseAsync(); }
@@ -172,6 +172,12 @@ internal sealed class KeyEngine : IDisposable
             byte[] r;
             try { r = await notify.ReadAsync(ct); }
             catch (OperationCanceledException) { return; }
+            // [0, 0, 0, 5, 0x60, 0, delta i32]: the dial turned (+1 per click right, -1 left).
+            if (r.Length >= 10 && r[3] == DialReport && r[4] == DialTurnId)
+            {
+                if (Active && _playing) lock (_gate) OnDialTurn(BitConverter.ToInt32(r, 6));
+                continue;
+            }
             // [0, 0, 0, type, bitmap...]: bit n of the bitmap = key id n is down.
             if (r.Length < 5 || r[3] != KeyStateReport) continue;
             if (!Active) { SyncWithoutActing(r); continue; }
@@ -216,6 +222,7 @@ internal sealed class KeyEngine : IDisposable
             return;
         }
         if (!_playing) return;
+        if (id == DialPressKey) { OnDialPress(now); return; }
         if (id == FnKey || !_keys.TryGetValue(id, out var c) || c.Foreign) return;
         byte map = c.OriginalMapByte;
         if (map == 0) return;
@@ -235,6 +242,12 @@ internal sealed class KeyEngine : IDisposable
             action = c.Main;
         }
 
+        if (Begin(action) is { } held) _held[id] = held;
+    }
+
+    /// <summary>Starts an action (keys down, media down, macro playing) and returns what to undo on release.</summary>
+    private static Held? Begin(KeyAction action)
+    {
         var held = new Held();
         switch (action.Kind)
         {
@@ -255,9 +268,9 @@ internal sealed class KeyEngine : IDisposable
                 if (!m.StopOnRelease) held.Macro = null; // play once: runs to the end on its own
                 break;
             default:
-                return; // Disabled, Default, Kept (Web Hub text actions etc.): nothing to send
+                return null; // Disabled, Default, Kept (Web Hub text actions etc.): nothing to send
         }
-        _held[id] = held;
+        return held;
     }
 
     /// <summary>A custom FN + arrow made in DeckMapper wins over screen switching, as it does on the keyboard.</summary>
@@ -266,7 +279,11 @@ internal sealed class KeyEngine : IDisposable
 
     private void Release(byte id)
     {
-        if (!_held.Remove(id, out var h)) return;
+        if (_held.Remove(id, out var h)) End(h);
+    }
+
+    private static void End(Held h)
+    {
         for (int i = h.Keys.Count - 1; i >= 0; i--) InputSender.KeyUp(h.Keys[i]);
         foreach (var m in h.Media) InputSender.Media(m, up: true);
         foreach (var b in h.Mouse) InputSender.MouseButton(b, up: true);
@@ -278,6 +295,7 @@ internal sealed class KeyEngine : IDisposable
         lock (_gate)
         {
             foreach (var id in _held.Keys.ToList()) Release(id);
+            EndSwitchApps();
             Array.Clear(_down);
         }
     }

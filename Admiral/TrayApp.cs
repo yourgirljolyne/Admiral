@@ -24,6 +24,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _keysStatus = new() { Enabled = false };
     private readonly ToolStripMenuItem _screenStatus = new() { Enabled = false };
     private readonly ToolStripMenuItem _cardStatus = new() { Enabled = false };
+    private readonly ToolStripMenuItem _dialMenu = new("Dial");
     private readonly ToolStripMenuItem _keysItem = new("Play my custom keys in software mode") { CheckOnClick = true };
     private readonly ToolStripMenuItem _screensItem = new("Switch screens with FN + arrows in software mode") { CheckOnClick = true };
     private readonly ToolStripMenuItem _cardItem = new("Now-playing card") { CheckOnClick = true };
@@ -53,6 +54,12 @@ internal sealed class TrayApp : ApplicationContext
         _engine.PlayKeys = _settings.PlayKeys;
         _engine.SwitchScreens = _settings.SwitchScreens;
         _engine.KeysTakenBy = Companions.KeysTakenBy;
+        _engine.DialModeIndex = _settings.DialMode;
+        _engine.DialModeChanged += () => _ui.Post(_ =>
+        {
+            if (_settings.DialMode != _engine.DialModeIndex) { _settings.DialMode = _engine.DialModeIndex; _settings.Save(); }
+            UpdateDialMenu();
+        }, null);
         _engine.ScreenStep += dir => Task.Run(() => _switcher.StepAsync(dir));
         _switcher.Switched += id => _tracker.OnScreenSwitched(id);
 
@@ -107,7 +114,9 @@ internal sealed class TrayApp : ApplicationContext
         _cardMenu.DropDownItems.AddRange([_spotifyOnlyItem, _showPausedItem, _restoreIdleItem, _idleTimeItem]);
 
         var menu = new ContextMenuStrip();
-        menu.Items.AddRange([_keysStatus, _screenStatus, _cardStatus, new ToolStripSeparator()]);
+        _dialMenu.DropDownOpening += (_, _) => UpdateDialMenu();
+        UpdateDialMenu();
+        menu.Items.AddRange([_keysStatus, _screenStatus, _cardStatus, _dialMenu, new ToolStripSeparator()]);
         menu.Items.Add("Open DeckMapper (keys)", null, (_, _) => Companions.Open("DeckMapper", _settings, null));
         menu.Items.Add("Open SlotDeck (screen slots)", null, (_, _) => Companions.Open("SlotDeck", _settings, null));
         menu.Items.Add(new ToolStripSeparator());
@@ -116,6 +125,22 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit (restore my screen)", null, async (_, _) => await ExitAsync());
         return menu;
+    }
+
+    /// <summary>"Dial: mode 2 of 3 (Custom actions)", with the modes to pick from (FN + dial press does the same).</summary>
+    private void UpdateDialMenu()
+    {
+        int count = _engine.DialModeCount, current = _engine.DialModeIndex;
+        _dialMenu.Text = count == 0 ? "Dial: Volume" : $"Dial: mode {current + 1} of {count} ({_engine.DialModeName(current)})";
+        _dialMenu.DropDownItems.Clear();
+        for (int i = 0; i < count; i++)
+        {
+            int mode = i;
+            _dialMenu.DropDownItems.Add(new ToolStripMenuItem($"Mode {i + 1}: {_engine.DialModeName(i)}", null,
+                (_, _) => _engine.DialModeIndex = mode) { Checked = i == current });
+        }
+        if (count > 0) _dialMenu.DropDownItems.Add(new ToolStripSeparator());
+        _dialMenu.DropDownItems.Add(new ToolStripMenuItem("In software mode, FN + dial press goes to the next mode") { Enabled = false });
     }
 
     private void ShowMenu()
